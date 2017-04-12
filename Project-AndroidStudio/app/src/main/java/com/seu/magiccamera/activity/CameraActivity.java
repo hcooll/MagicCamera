@@ -8,13 +8,24 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.DialogInterface;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.PixelFormat;
 import android.graphics.Point;
+import android.graphics.PorterDuff;
+import android.graphics.Rect;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.Handler;
 import android.support.v4.app.ActivityCompat;
 import android.support.v4.content.PermissionChecker;
 import android.support.v7.widget.LinearLayoutManager;
 import android.support.v7.widget.RecyclerView;
+import android.view.SurfaceHolder;
+import android.view.SurfaceView;
 import android.view.View;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -22,8 +33,14 @@ import android.widget.RelativeLayout;
 
 import com.seu.magiccamera.R;
 import com.seu.magiccamera.adapter.FilterAdapter;
+import com.seu.magiccamera.filter.Filter;
+import com.seu.magiccamera.game.GameSence;
+import com.seu.magiccamera.filter.GLHelper;
 import com.seu.magicfilter.MagicEngine;
+import com.seu.magicfilter.filter.base.gpuimage.GPUImageFilter;
+import com.seu.magicfilter.filter.base.gpuimage.GPUImageNormalBlendFilter;
 import com.seu.magicfilter.filter.helper.MagicFilterType;
+import com.seu.magicfilter.helper.OnDrawFrameListener;
 import com.seu.magicfilter.utils.MagicParams;
 import com.seu.magicfilter.widget.MagicCameraView;
 
@@ -35,7 +52,7 @@ import java.util.Locale;
 /**
  * Created by why8222 on 2016/3/17.
  */
-public class CameraActivity extends Activity{
+public class CameraActivity extends Activity implements SurfaceHolder.Callback {
     private LinearLayout mFilterLayout;
     private RecyclerView mFilterListView;
     private FilterAdapter mAdapter;
@@ -48,10 +65,25 @@ public class CameraActivity extends Activity{
     private ImageView btn_shutter;
     private ImageView btn_mode;
 
+    private ImageView image_game;
+
+    private SurfaceView surface_game;
+    private SurfaceHolder holder;
+    private MyThread myThread;
+
+    Point screenSize;
+
+    GameSence mFlyBird;
+    final Filter filter_2 = new Filter();
+    int textureId_2 = GLHelper.NO_TEXTURE;
+
     private ObjectAnimator animator;
+
+    Handler handler = new Handler();
 
     private final MagicFilterType[] types = new MagicFilterType[]{
             MagicFilterType.NONE,
+            MagicFilterType.TWOINPUT,
             MagicFilterType.FAIRYTALE,
             MagicFilterType.SUNRISE,
             MagicFilterType.SUNSET,
@@ -101,19 +133,23 @@ public class CameraActivity extends Activity{
         setContentView(R.layout.activity_camera);
         MagicEngine.Builder builder = new MagicEngine.Builder();
         magicEngine = builder
-                .build((MagicCameraView)findViewById(R.id.glsurfaceview_camera));
+                .build((MagicCameraView) findViewById(R.id.glsurfaceview_camera));
         initView();
     }
 
-    private void initView(){
-        mFilterLayout = (LinearLayout)findViewById(R.id.layout_filter);
+    private void initView() {
+        mFilterLayout = (LinearLayout) findViewById(R.id.layout_filter);
         mFilterListView = (RecyclerView) findViewById(R.id.filter_listView);
 
-        btn_shutter = (ImageView)findViewById(R.id.btn_camera_shutter);
-        btn_mode = (ImageView)findViewById(R.id.btn_camera_mode);
+        btn_shutter = (ImageView) findViewById(R.id.btn_camera_shutter);
+        btn_mode = (ImageView) findViewById(R.id.btn_camera_mode);
+
+        image_game = (ImageView) findViewById(R.id.image_game);
 
         findViewById(R.id.btn_camera_filter).setOnClickListener(btn_listener);
         findViewById(R.id.btn_camera_closefilter).setOnClickListener(btn_listener);
+        findViewById(R.id.glsurfaceview_camera).setOnClickListener(btn_listener);
+        findViewById(R.id.btn_start_bird_game).setOnClickListener(btn_listener);
         findViewById(R.id.btn_camera_shutter).setOnClickListener(btn_listener);
         findViewById(R.id.btn_camera_switch).setOnClickListener(btn_listener);
         findViewById(R.id.btn_camera_mode).setOnClickListener(btn_listener);
@@ -127,23 +163,33 @@ public class CameraActivity extends Activity{
         mFilterListView.setAdapter(mAdapter);
         mAdapter.setOnFilterChangeListener(onFilterChangeListener);
 
-        animator = ObjectAnimator.ofFloat(btn_shutter,"rotation",0,360);
+        animator = ObjectAnimator.ofFloat(btn_shutter, "rotation", 0, 360);
         animator.setDuration(500);
         animator.setRepeatCount(ValueAnimator.INFINITE);
-        Point screenSize = new Point();
+        screenSize = new Point();
         getWindowManager().getDefaultDisplay().getSize(screenSize);
-        MagicCameraView cameraView = (MagicCameraView)findViewById(R.id.glsurfaceview_camera);
+        MagicCameraView cameraView = (MagicCameraView) findViewById(R.id.glsurfaceview_camera);
         RelativeLayout.LayoutParams params = (RelativeLayout.LayoutParams) cameraView.getLayoutParams();
         params.width = screenSize.x;
         params.height = screenSize.x * 4 / 3;
         cameraView.setLayoutParams(params);
+
+
+        surface_game = (SurfaceView) findViewById(R.id.surface_game);
+        surface_game.setZOrderOnTop(true);
+        holder = surface_game.getHolder();
+        holder.setFormat(PixelFormat.TRANSLUCENT);
+        holder.addCallback(this);
+        myThread = new MyThread(holder);
+
     }
 
-    private FilterAdapter.onFilterChangeListener onFilterChangeListener = new FilterAdapter.onFilterChangeListener(){
+
+    private FilterAdapter.onFilterChangeListener onFilterChangeListener = new FilterAdapter.onFilterChangeListener() {
 
         @Override
         public void onFilterChanged(MagicFilterType filterType) {
-            magicEngine.setFilter(filterType);
+            magicEngine.setFilter(filterType, BitmapFactory.decodeResource(CameraActivity.this.getResources(), R.drawable.take_filter_favorite_icon02_skin_flat));
         }
     };
 
@@ -151,7 +197,7 @@ public class CameraActivity extends Activity{
     public void onRequestPermissionsResult(int requestCode, String[] permissions,
                                            int[] grantResults) {
         if (grantResults.length != 1 || grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            if(mode == MODE_PIC)
+            if (mode == MODE_PIC)
                 takePhoto();
             else
                 takeVideo();
@@ -164,21 +210,29 @@ public class CameraActivity extends Activity{
 
         @Override
         public void onClick(View v) {
-            switch (v.getId()){
+            switch (v.getId()) {
                 case R.id.btn_camera_mode:
                     switchMode();
                     break;
                 case R.id.btn_camera_shutter:
                     if (PermissionChecker.checkSelfPermission(CameraActivity.this, Manifest.permission.WRITE_EXTERNAL_STORAGE)
                             == PackageManager.PERMISSION_DENIED) {
-                        ActivityCompat.requestPermissions(CameraActivity.this, new String[] { Manifest.permission.WRITE_EXTERNAL_STORAGE },
+                        ActivityCompat.requestPermissions(CameraActivity.this, new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},
                                 v.getId());
                     } else {
-                        if(mode == MODE_PIC)
+                        if (mode == MODE_PIC)
                             takePhoto();
                         else
                             takeVideo();
                     }
+                    break;
+                case R.id.glsurfaceview_camera:
+                    if (mFlyBird != null) {
+                        mFlyBird.fly();
+                    }
+                    break;
+                case R.id.btn_start_bird_game:
+                    startFlyBirdGame();
                     break;
                 case R.id.btn_camera_filter:
                     showFilters();
@@ -188,13 +242,13 @@ public class CameraActivity extends Activity{
                     break;
                 case R.id.btn_camera_beauty:
                     new AlertDialog.Builder(CameraActivity.this)
-                            .setSingleChoiceItems(new String[] { "关闭", "1", "2", "3", "4", "5"}, MagicParams.beautyLevel,
-                                new DialogInterface.OnClickListener() {
-                                    public void onClick(DialogInterface dialog, int which) {
-                                        magicEngine.setBeautyLevel(which);
-                                        dialog.dismiss();
-                                    }
-                                })
+                            .setSingleChoiceItems(new String[]{"关闭", "1", "2", "3", "4", "5"}, MagicParams.beautyLevel,
+                                    new DialogInterface.OnClickListener() {
+                                        public void onClick(DialogInterface dialog, int which) {
+                                            magicEngine.setBeautyLevel(which);
+                                            dialog.dismiss();
+                                        }
+                                    })
                             .setNegativeButton("取消", null)
                             .show();
                     break;
@@ -205,32 +259,143 @@ public class CameraActivity extends Activity{
         }
     };
 
-    private void switchMode(){
-        if(mode == MODE_PIC){
+    private void switchMode() {
+        if (mode == MODE_PIC) {
             mode = MODE_VIDEO;
             btn_mode.setImageResource(R.drawable.icon_camera);
-        }else{
+        } else {
             mode = MODE_PIC;
             btn_mode.setImageResource(R.drawable.icon_video);
         }
     }
 
-    private void takePhoto(){
-        magicEngine.savePicture(getOutputMediaFile(),null);
+    private void takePhoto() {
+        magicEngine.savePicture(getOutputMediaFile(), null);
     }
 
-    private void takeVideo(){
-        if(isRecording) {
+    private void takeVideo() {
+        if (isRecording) {
             animator.end();
             magicEngine.stopRecord();
-        }else {
+        } else {
             animator.start();
             magicEngine.startRecord();
         }
         isRecording = !isRecording;
     }
 
-    private void showFilters(){
+    private void startFlyBirdGame() {
+
+
+        surface_game.bringToFront();
+
+        if (mFlyBird == null) {
+            mFlyBird = new GameSence(this);
+        }
+
+        mFlyBird.startFly();
+
+        filter_2.init(Filter.COORD2, Filter.TEXTURE_COORD2);
+
+        magicEngine.setOnDrawFramListener(new OnDrawFrameListener() {
+            @Override
+            public void onDrawFrame(GPUImageFilter filter) {
+
+
+                System.out.println("thread: " + Thread.currentThread());
+
+                final Bitmap bitmap_2 = mFlyBird.myDraw();
+
+
+                if (filter != null) {
+                    if (filter instanceof GPUImageNormalBlendFilter) {
+                        GPUImageNormalBlendFilter twoInputFilter = (GPUImageNormalBlendFilter) filter;
+                        twoInputFilter.setBitmap(bitmap_2);
+                    } else {
+                        textureId_2 = GLHelper.loadTexture(bitmap_2, textureId_2);
+                        filter_2.drawFrame(textureId_2);
+                    }
+                }
+
+                // 在SurfaceView上显示
+                myThread.mbitmap = bitmap_2;
+
+                // 在View上显示
+//                handler.post(new Runnable() {
+//                    @Override
+//                    public void run() {
+//                        image_game.setBackground(new BitmapDrawable(bitmap_2));
+//                    }
+//                });
+
+            }
+        });
+    }
+
+    @Override
+    public void surfaceCreated(SurfaceHolder holder) {
+        myThread.isRun = true;
+        //myThread.start();
+    }
+
+    @Override
+    public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
+
+    }
+
+    @Override
+    public void surfaceDestroyed(SurfaceHolder holder) {
+        myThread.isRun = false;
+    }
+
+    //线程内部类
+    class MyThread extends Thread {
+
+        private SurfaceHolder holder;
+        public boolean isRun;
+        public Bitmap mbitmap;
+        Paint p; //创建画笔
+        Rect rect;
+
+        public MyThread(SurfaceHolder holder) {
+            this.holder = holder;
+            isRun = true;
+            p = new Paint(); //创建画笔
+            rect = new Rect(0, 0, screenSize.x, screenSize.x * 4 / 3 - 25);
+        }
+
+        @Override
+        public void run() {
+            while (isRun) {
+                Canvas c = null;
+                try {
+                    if (mbitmap != null) {
+                        synchronized (holder) {
+                            c = holder.lockCanvas();//锁定画布，一般在锁定后就可以通过其返回的画布对象Canvas，在其上面画图等操作了。
+                            c.drawColor(Color.BLACK, PorterDuff.Mode.CLEAR);//设置画布背景颜色
+//
+//                            Paint p = new Paint(); //创建画笔
+//                            p.setColor(Color.WHITE);
+//                            Rect r = new Rect(100, 50, 300, 250);
+//                            c.drawRect(r, p);
+
+
+                            c.drawBitmap(mbitmap, null, rect, p);
+                        }
+                    }
+                    Thread.sleep(50);//睡眠时间
+                } catch (Exception e) {
+                    e.printStackTrace();
+                } finally {
+                    if (c != null) {
+                        holder.unlockCanvasAndPost(c);//结束锁定画图，并提交改变。
+                    }
+                }
+            }
+        }
+    }
+
+    private void showFilters() {
         ObjectAnimator animator = ObjectAnimator.ofFloat(mFilterLayout, "translationY", mFilterLayout.getHeight(), 0);
         animator.setDuration(200);
         animator.addListener(new Animator.AnimatorListener() {
@@ -259,8 +424,8 @@ public class CameraActivity extends Activity{
         animator.start();
     }
 
-    private void hideFilters(){
-        ObjectAnimator animator = ObjectAnimator.ofFloat(mFilterLayout, "translationY", 0 ,  mFilterLayout.getHeight());
+    private void hideFilters() {
+        ObjectAnimator animator = ObjectAnimator.ofFloat(mFilterLayout, "translationY", 0, mFilterLayout.getHeight());
         animator.setDuration(200);
         animator.addListener(new Animator.AnimatorListener() {
 

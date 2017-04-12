@@ -1,4 +1,4 @@
-package com.seu.magiccamera.helper;
+package com.seu.magiccamera.filter;
 
 import com.seu.magiccamera.R;
 import com.seu.magicfilter.filter.helper.MagicFilterType;

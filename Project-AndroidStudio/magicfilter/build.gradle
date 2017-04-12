@@ -1,34 +1,44 @@
-apply plugin: 'com.android.model.library'
+apply plugin: 'com.android.library'
 
-model {
+//model {
     android {
         compileSdkVersion = 23
-        buildToolsVersion = "23.0.3"
+        buildToolsVersion = '25.0.0'
 
         defaultConfig.with {
-            minSdkVersion.apiLevel = 18
-            targetSdkVersion.apiLevel = 21
+            minSdkVersion = 18
+            targetSdkVersion = 21
             versionCode = 1
             versionName = "1.0"
-        }
-    }
+//        }
+//    }
 
-    android.ndk {
-        moduleName = "MagicBeautify"
-        cppFlags.add("-DANDROID_NDK")
-        cppFlags.add("-D_DEBUG")
-        ldLibs.add("log")
-        ldLibs.add("jnigraphics")
-        stl = "stlport_static"
-    }
-
-    android.buildTypes {
-        release {
-            minifyEnabled = false
-            proguardFiles.add(file('proguard-rules.txt'))
+            ndk {
+                moduleName = "MagicBeautify"
+                //cppFlags.add("-DANDROID_NDK")
+                //cppFlags.add("-D_DEBUG")
+                //ldLibs.add("log")
+               // ldLibs.add("jnigraphics")
+                stl = "stlport_static"
+            }
         }
+
+        sourceSets {
+            main {
+                jni.srcDirs = []
+            }
+        }
+
+        android.buildTypes {
+            release {
+                minifyEnabled = false
+                proguardFiles.add(file('proguard-rules.txt'))
+            }
+        }
+
+
     }
-}
+//}
 
 dependencies {
     compile fileTree(dir: 'libs', include: ['*.jar'])

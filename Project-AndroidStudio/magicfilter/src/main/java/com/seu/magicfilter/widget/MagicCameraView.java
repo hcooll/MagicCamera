@@ -2,9 +2,7 @@ package com.seu.magicfilter.widget;
 
 import android.content.Context;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.SurfaceTexture;
-import android.hardware.Camera;
 import android.opengl.EGL14;
 import android.opengl.GLES20;
 import android.util.AttributeSet;
@@ -15,7 +13,9 @@ import com.seu.magicfilter.camera.utils.CameraInfo;
 import com.seu.magicfilter.encoder.video.TextureMovieEncoder;
 import com.seu.magicfilter.filter.advanced.MagicBeautyFilter;
 import com.seu.magicfilter.filter.base.MagicCameraInputFilter;
+import com.seu.magicfilter.filter.base.gpuimage.GPUImageFilter;
 import com.seu.magicfilter.filter.helper.MagicFilterType;
+import com.seu.magicfilter.helper.OnDrawFrameListener;
 import com.seu.magicfilter.helper.SavePictureTask;
 import com.seu.magicfilter.utils.MagicParams;
 import com.seu.magicfilter.utils.OpenGlUtils;
@@ -54,12 +54,17 @@ public class MagicCameraView extends MagicBaseView {
     private static final int RECORDING_RESUMED = 2;
     private static TextureMovieEncoder videoEncoder = new TextureMovieEncoder();
 
+    byte[] bytes = new byte[500 * 500 * 4];
+
+
+    private OnDrawFrameListener mOnDrawFrameListener;
+
     private File outputFile;
 
     public MagicCameraView(Context context, AttributeSet attrs) {
         super(context, attrs);
         this.getHolder().addCallback(this);
-        outputFile = new File(MagicParams.videoPath,MagicParams.videoName);
+        outputFile = new File(MagicParams.videoPath, MagicParams.videoName);
         recordingStatus = -1;
         recordingEnabled = false;
         scaleType = ScaleType.CENTER_CROP;
@@ -73,7 +78,7 @@ public class MagicCameraView extends MagicBaseView {
             recordingStatus = RECORDING_RESUMED;
         else
             recordingStatus = RECORDING_OFF;
-        if(cameraInputFilter == null)
+        if (cameraInputFilter == null)
             cameraInputFilter = new MagicCameraInputFilter();
         cameraInputFilter.init();
         if (textureId == OpenGlUtils.NO_TEXTURE) {
@@ -94,7 +99,7 @@ public class MagicCameraView extends MagicBaseView {
     @Override
     public void onDrawFrame(GL10 gl) {
         super.onDrawFrame(gl);
-        if(surfaceTexture == null)
+        if (surfaceTexture == null)
             return;
         surfaceTexture.updateTexImage();
         if (recordingEnabled) {
@@ -135,13 +140,17 @@ public class MagicCameraView extends MagicBaseView {
         float[] mtx = new float[16];
         surfaceTexture.getTransformMatrix(mtx);
         cameraInputFilter.setTextureTransformMatrix(mtx);
+        if (mOnDrawFrameListener != null) {
+            mOnDrawFrameListener.onDrawFrame(filter);
+        }
         int id = textureId;
-        if(filter == null){
+        if (filter == null) {
             cameraInputFilter.onDrawFrame(textureId, gLCubeBuffer, gLTextureBuffer);
-        }else{
+        } else {
             id = cameraInputFilter.onDrawToTexture(textureId);
             filter.onDrawFrame(id, gLCubeBuffer, gLTextureBuffer);
         }
+        GLES20.glReadPixels(0, 0, 500, 500, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, ByteBuffer.wrap(bytes));
         videoEncoder.setTextureId(id);
         videoEncoder.frameAvailable(surfaceTexture);
     }
@@ -155,25 +164,27 @@ public class MagicCameraView extends MagicBaseView {
     };
 
     @Override
-    public void setFilter(MagicFilterType type) {
-        super.setFilter(type);
+    public GPUImageFilter setFilter(MagicFilterType type, Bitmap bitmap) {
+        super.setFilter(type, bitmap);
         videoEncoder.setFilter(type);
+        return filter;
     }
 
-    private void openCamera(){
-        if(CameraEngine.getCamera() == null)
+
+    private void openCamera() {
+        if (CameraEngine.getCamera() == null)
             CameraEngine.openCamera();
         CameraInfo info = CameraEngine.getCameraInfo();
-        if(info.orientation == 90 || info.orientation == 270){
+        if (info.orientation == 90 || info.orientation == 270) {
             imageWidth = info.previewHeight;
             imageHeight = info.previewWidth;
-        }else{
+        } else {
             imageWidth = info.previewWidth;
             imageHeight = info.previewHeight;
         }
         cameraInputFilter.onInputSizeChanged(imageWidth, imageHeight);
         adjustSize(info.orientation, info.isFront, true);
-        if(surfaceTexture != null)
+        if (surfaceTexture != null)
             CameraEngine.startPreview(surfaceTexture);
     }
 
@@ -183,14 +194,18 @@ public class MagicCameraView extends MagicBaseView {
         CameraEngine.releaseCamera();
     }
 
+    public void setOnDrawFrameListener(OnDrawFrameListener listener) {
+        mOnDrawFrameListener = listener;
+    }
+
     public void changeRecordingState(boolean isRecording) {
         recordingEnabled = isRecording;
     }
 
-    protected void onFilterChanged(){
+    protected void onFilterChanged() {
         super.onFilterChanged();
         cameraInputFilter.onDisplaySizeChanged(surfaceWidth, surfaceHeight);
-        if(filter != null)
+        if (filter != null)
             cameraInputFilter.initCameraFrameBuffer(imageWidth, imageHeight);
         else
             cameraInputFilter.destroyFramebuffers();
@@ -198,37 +213,68 @@ public class MagicCameraView extends MagicBaseView {
 
     @Override
     public void savePicture(final SavePictureTask savePictureTask) {
-        CameraEngine.takePicture(null, null, new Camera.PictureCallback() {
-            @Override
-            public void onPictureTaken(byte[] data, Camera camera) {
-                CameraEngine.stopPreview();
-                final Bitmap bitmap = BitmapFactory.decodeByteArray(data, 0, data.length);
+
+//        CameraEngine.takePicture(null, null, new Camera.PictureCallback() {
+//            @Override
+//            public void onPictureTaken(byte[] data, Camera camera) {
+//                CameraEngine.stopPreview();
                 queueEvent(new Runnable() {
                     @Override
                     public void run() {
-                        final Bitmap photo = drawPhoto(bitmap,CameraEngine.getCameraInfo().isFront);
-                        GLES20.glViewport(0, 0, surfaceWidth, surfaceHeight);
-                        if (photo != null)
-                            savePictureTask.execute(photo);
+                        Bitmap bitmap = Bitmap.createBitmap(500, 500, Bitmap.Config.ARGB_8888);
+                        bitmap.copyPixelsFromBuffer(ByteBuffer.wrap(bytes));
+
+//                        Matrix matrix = new Matrix();
+//                        matrix.reset();
+//                        matrix.setScale(1.0f, -1.0f);
+//
+//                        Bitmap bitmap_2 = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+                        //final Bitmap bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+                        //final Bitmap photo = drawPhoto(bitmap, CameraEngine.getCameraInfo().isFront);
+                       //GLES20.glViewport(0, 0, surfaceWidth, surfaceHeight);
+                        if (bitmap != null)
+                            savePictureTask.execute(bitmap);
                     }
                 });
-                CameraEngine.startPreview();
-            }
-        });
+
+//                CameraEngine.startPreview();
+//            }
+//        });
     }
 
-    private Bitmap drawPhoto(Bitmap bitmap,boolean isRotated){
+//    static public Bitmap createMyBitmap(byte[] data, int width, int height){
+//        int []colors = convertByteToColor(data);
+//        if (colors == null){
+//            return null;
+//        }
+//
+//        Bitmap bmp = Bitmap.createBitmap(colors, 0, width, width, height,
+//                Bitmap.Config.ARGB_8888);
+//        return bmp;
+//    }
+//
+//
+//    // 将一个byte数转成int
+//// 实现这个函数的目的是为了将byte数当成无符号的变量去转化成int
+//    public static int convertByteToInt(byte data){
+//
+//        int heightBit = (int) ((data>>4) & 0x0F);
+//        int lowBit = (int) (0x0F & data);
+//        return heightBit * 16 + lowBit;
+//    }
+
+    private Bitmap drawPhoto(Bitmap bitmap, boolean isRotated) {
         int width = bitmap.getWidth();
         int height = bitmap.getHeight();
         int[] mFrameBuffers = new int[1];
         int[] mFrameBufferTextures = new int[1];
-        if(beautyFilter == null)
+        if (beautyFilter == null)
             beautyFilter = new MagicBeautyFilter();
         beautyFilter.init();
         beautyFilter.onDisplaySizeChanged(width, height);
         beautyFilter.onInputSizeChanged(width, height);
 
-        if(filter != null) {
+        if (filter != null) {
             filter.onInputSizeChanged(width, height);
             filter.onDisplaySizeChanged(width, height);
         }
@@ -259,15 +305,15 @@ public class MagicCameraView extends MagicBaseView {
                 .order(ByteOrder.nativeOrder())
                 .asFloatBuffer();
         gLCubeBuffer.put(TextureRotationUtil.CUBE).position(0);
-        if(isRotated)
+        if (isRotated)
             gLTextureBuffer.put(TextureRotationUtil.getRotation(Rotation.NORMAL, false, false)).position(0);
         else
             gLTextureBuffer.put(TextureRotationUtil.getRotation(Rotation.NORMAL, false, true)).position(0);
 
 
-        if(filter == null){
+        if (filter == null) {
             beautyFilter.onDrawFrame(textureId, gLCubeBuffer, gLTextureBuffer);
-        }else{
+        } else {
             beautyFilter.onDrawFrame(textureId);
             filter.onDrawFrame(mFrameBufferTextures[0], gLCubeBuffer, gLTextureBuffer);
         }
@@ -283,7 +329,7 @@ public class MagicCameraView extends MagicBaseView {
 
         beautyFilter.destroy();
         beautyFilter = null;
-        if(filter != null) {
+        if (filter != null) {
             filter.onDisplaySizeChanged(surfaceWidth, surfaceHeight);
             filter.onInputSizeChanged(imageWidth, imageHeight);
         }

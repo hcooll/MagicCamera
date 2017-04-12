@@ -5,6 +5,7 @@ package com.seu.magicfilter.filter.helper;
  */
 public enum  MagicFilterType {
     NONE,
+    TWOINPUT,
     FAIRYTALE,
     SUNRISE,
     SUNSET,

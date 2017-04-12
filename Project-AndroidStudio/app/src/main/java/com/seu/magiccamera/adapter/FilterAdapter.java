@@ -10,7 +10,7 @@ import android.widget.ImageView;
 import android.widget.TextView;
 
 import com.seu.magiccamera.R;
-import com.seu.magiccamera.helper.FilterTypeHelper;
+import com.seu.magiccamera.filter.FilterTypeHelper;
 import com.seu.magicfilter.filter.helper.MagicFilterType;
 
 /**

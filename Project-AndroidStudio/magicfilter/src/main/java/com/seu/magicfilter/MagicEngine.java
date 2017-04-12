@@ -1,11 +1,13 @@
 package com.seu.magicfilter;
 
-import android.content.Context;
+import android.graphics.Bitmap;
 
 import com.seu.magicfilter.camera.CameraEngine;
+import com.seu.magicfilter.filter.base.gpuimage.GPUImageFilter;
 import com.seu.magicfilter.filter.helper.MagicFilterType;
-import com.seu.magicfilter.utils.MagicParams;
+import com.seu.magicfilter.helper.OnDrawFrameListener;
 import com.seu.magicfilter.helper.SavePictureTask;
+import com.seu.magicfilter.utils.MagicParams;
 import com.seu.magicfilter.widget.MagicCameraView;
 import com.seu.magicfilter.widget.base.MagicBaseView;
 
@@ -28,8 +30,13 @@ public class MagicEngine {
 
     }
 
-    public void setFilter(MagicFilterType type){
-        MagicParams.magicBaseView.setFilter(type);
+    public void setOnDrawFramListener(OnDrawFrameListener listener){
+        if(MagicParams.magicBaseView instanceof MagicCameraView)
+            ((MagicCameraView)MagicParams.magicBaseView).setOnDrawFrameListener(listener);
+    }
+
+    public GPUImageFilter setFilter(MagicFilterType type, Bitmap bitmap){
+       return MagicParams.magicBaseView.setFilter(type,bitmap);
     }
 
     public void savePicture(File file, SavePictureTask.OnPictureSaveListener listener){
